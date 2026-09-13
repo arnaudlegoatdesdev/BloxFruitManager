@@ -1,0 +1,92 @@
+{
+  "name": "bloxfruit-manager",
+  "version": "1.0.0",
+  "description": "Multi-session isolated browser for Roblox Blox Fruits",
+  "main": "dist-electron/electron/main.js",
+  "scripts": {
+    "dev:renderer": "vite",
+    "dev:electron": "tsc -p tsconfig.electron.json && electron .",
+    "dev": "concurrently -k \"npm run dev:renderer\" \"wait-on http://localhost:5173 && npm run dev:electron\"",
+    "build:renderer": "vite build",
+    "build:electron": "tsc -p tsconfig.electron.json",
+    "build": "npm run build:renderer && npm run build:electron",
+    "pack": "npm run build && electron-builder --mac",
+    "dist": "npm run build && electron-builder --mac --publish always"
+  },
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/arnaudlegoatdesdev/BloxFruitManager.git"
+  },
+  "keywords": [
+    "electron",
+    "roblox",
+    "blox-fruits",
+    "multi-session"
+  ],
+  "author": "",
+  "license": "ISC",
+  "type": "commonjs",
+  "bugs": {
+    "url": "https://github.com/arnaudlegoatdesdev/BloxFruitManager/issues"
+  },
+  "homepage": "https://github.com/arnaudlegoatdesdev/BloxFruitManager#readme",
+  "build": {
+    "appId": "com.bloxfruit.manager",
+    "productName": "Bloxfruit Manager",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "dist-electron/**/*",
+      "!node_modules/**/*"
+    ],
+    "mac": {
+      "target": [
+        {
+          "target": "dmg",
+          "arch": [
+            "universal"
+          ]
+        }
+      ],
+      "category": "public.app-category.utilities",
+      "icon": "build/flamme.png",
+      "darkModeSupport": true
+    },
+    "dmg": {
+      "title": "Blox Fruit Manager",
+      "contents": [
+        {
+          "x": 130,
+          "y": 220
+        },
+        {
+          "x": 410,
+          "y": 220,
+          "type": "link",
+          "path": "/Applications"
+        }
+      ]
+    }
+  },
+  "dependencies": {
+    "react": "^19.3.0",
+    "react-dom": "^19.3.0",
+    "uuid": "^14.0.2"
+  },
+  "devDependencies": {
+    "@tailwindcss/vite": "^4.3.3",
+    "@types/react": "^19.3.0",
+    "@types/react-dom": "^19.3.0",
+    "@types/uuid": "^10.0.0",
+    "@vitejs/plugin-react": "^6.1.1",
+    "concurrently": "^10.0.5",
+    "electron": "^44.3.0",
+    "electron-builder": "^26.15.3",
+    "tailwindcss": "^4.3.3",
+    "typescript": "^7.0.2",
+    "vite": "^8.3.0",
+    "wait-on": "^9.1.0"
+  }
+}
