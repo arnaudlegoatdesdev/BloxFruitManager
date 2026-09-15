@@ -43,6 +43,13 @@
       "dist-electron/**/*",
       "!node_modules/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "resources/MultipleRobloxInstances",
+        "to": "MultipleRobloxInstances",
+        "filter": ["**/*"]
+      }
+    ],
     "mac": {
       "target": [
         {

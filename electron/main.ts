@@ -106,50 +106,22 @@ function startWindowsMultiInstance() {
   if (process.platform !== 'win32') return;
   stopWindowsMultiInstance();
 
-  // If Roblox is already open, we must kill it so we can acquire the mutex before it starts again
-  try {
-    const tasklist = execSync('tasklist /FI "IMAGENAME eq RobloxPlayerBeta.exe" /NH', { encoding: 'utf8' });
-    if (tasklist.includes('RobloxPlayerBeta.exe')) {
-      const response = dialog.showMessageBoxSync({
-        type: 'warning',
-        title: 'Close Roblox',
-        message: 'Roblox must be closed to enable Multi Load. Should we close it now?',
-        buttons: ['Yes', 'No']
-      });
-      if (response === 0) {
-        execSync('taskkill /F /IM RobloxPlayerBeta.exe /T');
-      }
-    }
-  } catch (e) {
-    // ignore
-  }
-
-  const psScript = `
-$robloxPath = Join-Path $env:LOCALAPPDATA "Roblox";
-try {
-  $mutex = New-Object System.Threading.Mutex($true, "ROBLOX_singletonMutex");
-} catch {}
-$cookiePath = Join-Path $robloxPath "LocalStorage\\RobloxCookies.dat";
-if (Test-Path $cookiePath) {
-  try {
-    $cookieStream = [System.IO.File]::Open($cookiePath, [System.IO.FileMode]::Open, [System.IO.FileAccess]::Read, [System.IO.FileShare]::None);
-  } catch {}
-}
-while ($true) {
-  if ($mutex) { $mutex.WaitOne(0) | Out-Null }
-  Start-Sleep -Seconds 10
-}
-  `.trim();
-
-  const encodedCommand = Buffer.from(psScript, 'utf16le').toString('base64');
-  multiInstanceProcess = spawn('powershell', ['-WindowStyle', 'Hidden', '-NoProfile', '-EncodedCommand', encodedCommand], {
-    detached: true,
-    stdio: 'ignore'
-  });
+  const isPackaged = app.isPackaged;
+  const basePath = isPackaged ? process.resourcesPath : app.getAppPath();
+  const exePath = path.join(basePath, isPackaged ? 'MultipleRobloxInstances' : 'resources/MultipleRobloxInstances', 'MultipleRobloxInstances.exe');
   
-  if (multiInstanceProcess) {
-    multiInstanceProcess.unref();
-    console.log('[MultiLoad] Windows background multi-instance logic started');
+  if (fs.existsSync(exePath)) {
+    multiInstanceProcess = spawn(exePath, [], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    
+    if (multiInstanceProcess) {
+      multiInstanceProcess.unref();
+      console.log('[MultiLoad] Windows MultipleRobloxInstances app started');
+    }
+  } else {
+    console.error('[MultiLoad] Could not find MultipleRobloxInstances.exe at', exePath);
   }
 }
 
