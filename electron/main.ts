@@ -1,6 +1,7 @@
 import { app, BrowserWindow, ipcMain, session, shell, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs';
+import { spawn, execSync, ChildProcess } from 'child_process';
 
 
 // ── Types ───────────────────────────────────────────────────────────────────
@@ -86,13 +87,50 @@ let store: JsonStore;
 // Track open session windows to prevent duplicates
 const openWindows = new Map<string, BrowserWindow>();
 
+// ── Windows Multi-Instance Logic ────────────────────────────────────────────
+
+let multiInstanceProcess: ChildProcess | null = null;
+
+function stopWindowsMultiInstance() {
+  if (multiInstanceProcess) {
+    try {
+      multiInstanceProcess.kill();
+    } catch (e) {
+      console.error('Failed to kill multiInstanceProcess:', e);
+    }
+    multiInstanceProcess = null;
+  }
+}
+
+function startWindowsMultiInstance() {
+  if (process.platform !== 'win32') return;
+  stopWindowsMultiInstance();
+
+  const isPackaged = app.isPackaged;
+  const basePath = isPackaged ? process.resourcesPath : app.getAppPath();
+  const exePath = path.join(basePath, isPackaged ? 'MultipleRobloxInstances' : 'resources/MultipleRobloxInstances', 'MultipleRobloxInstances.exe');
+  
+  if (fs.existsSync(exePath)) {
+    multiInstanceProcess = spawn(exePath, [], {
+      detached: true,
+      stdio: 'ignore'
+    });
+    
+    if (multiInstanceProcess) {
+      multiInstanceProcess.unref();
+      console.log('[MultiLoad] Windows MultipleRobloxInstances app started');
+    }
+  } else {
+    console.error('[MultiLoad] Could not find MultipleRobloxInstances.exe at', exePath);
+  }
+}
+
 // ── Launch Logic ───────────────────────────────────────────────
 
 function handleRobloxLaunch(targetUrl: string, sessionId: string): boolean {
   if (targetUrl.startsWith('roblox-player://') || targetUrl.startsWith('roblox://')) {
     if (store.getMultiLoadEnabled() && process.platform === 'win32') {
-      // TODO: Implement Windows multi-instance mutex killer logic here in the future
-      console.log(`[MultiLoad] Windows multi-instance not implemented yet for session: ${sessionId}`);
+      console.log(`[MultiLoad] Launching Roblox (Windows multi-instance active) for session: ${sessionId}`);
       shell.openExternal(targetUrl);
     } else {
       shell.openExternal(targetUrl);
@@ -316,6 +354,11 @@ function registerIpcHandlers(): void {
 
   ipcMain.handle('multiload:toggle', (_event, enabled: boolean) => {
     store.setMultiLoadEnabled(enabled);
+    if (enabled) {
+      startWindowsMultiInstance();
+    } else {
+      stopWindowsMultiInstance();
+    }
     return enabled;
   });
 
@@ -419,6 +462,11 @@ app.setName('Bloxfruit Manager');
 
 app.whenReady().then(() => {
   store = new JsonStore();
+
+  if (store.getMultiLoadEnabled()) {
+    startWindowsMultiInstance();
+  }
+
   registerIpcHandlers();
   createMainWindow();
 
@@ -430,7 +478,12 @@ app.whenReady().then(() => {
 });
 
 app.on('window-all-closed', () => {
+  stopWindowsMultiInstance();
   if (process.platform !== 'darwin') {
     app.quit();
   }
+});
+
+app.on('will-quit', () => {
+  stopWindowsMultiInstance();
 });

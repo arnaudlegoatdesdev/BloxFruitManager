@@ -43,6 +43,13 @@
       "dist-electron/**/*",
       "!node_modules/**/*"
     ],
+    "extraResources": [
+      {
+        "from": "resources/MultipleRobloxInstances",
+        "to": "MultipleRobloxInstances",
+        "filter": ["**/*"]
+      }
+    ],
     "mac": {
       "target": [
         {
@@ -72,14 +79,14 @@
       ]
     },
     "win": {
-      "target": ["nsis"],
+      "target": [
+        "nsis"
+      ],
       "icon": "build/flamme.png"
     },
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "installerIcon": "build/flamme.png",
-      "uninstallerIcon": "build/flamme.png",
       "createDesktopShortcut": true,
       "shortcutName": "Blox Fruit Manager"
     }
