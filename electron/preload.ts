@@ -25,6 +25,10 @@ export interface ElectronAPI {
     getPrivateLink: () => Promise<string>;
     setPrivateLink: (link: string) => Promise<string>;
   };
+  backup: {
+    exportData: () => Promise<{ success: boolean; error?: string }>;
+    importData: () => Promise<{ success: boolean; error?: string; sessions?: SessionEntry[]; multiLoadEnabled?: boolean; globalPrivateLink?: string }>;
+  };
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -49,5 +53,9 @@ contextBridge.exposeInMainWorld('electronAPI', {
   settings: {
     getPrivateLink: () => ipcRenderer.invoke('settings:getPrivateLink'),
     setPrivateLink: (link: string) => ipcRenderer.invoke('settings:setPrivateLink', link),
+  },
+  backup: {
+    exportData: () => ipcRenderer.invoke('app:exportData'),
+    importData: () => ipcRenderer.invoke('app:importData'),
   }
 } satisfies ElectronAPI);

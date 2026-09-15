@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
+import { app, BrowserWindow, ipcMain, session, shell, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { execSync } from 'child_process';
@@ -410,6 +410,90 @@ function registerIpcHandlers(): void {
   ipcMain.handle('settings:setPrivateLink', (_event, link: string) => {
     store.setGlobalPrivateLink(link);
     return link;
+  });
+
+  ipcMain.handle('app:exportData', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return { success: false, error: 'No main window' };
+
+    const { canceled, filePath } = await dialog.showSaveDialog(win, {
+      title: 'Export Sessions & Tokens',
+      defaultPath: 'bloxfruit_manager_backup.bfm',
+      filters: [{ name: 'BloxFruit Manager Backup', extensions: ['bfm', 'json'] }]
+    });
+
+    if (canceled || !filePath) return { success: false, error: 'Canceled' };
+
+    try {
+      const dataToExport = {
+        store: store.getSessions(),
+        multiLoadEnabled: store.getMultiLoadEnabled(),
+        globalPrivateLink: store.getGlobalPrivateLink(),
+        cookies: {} as Record<string, string>
+      };
+
+      for (const sessionEntry of dataToExport.store) {
+        const partition = `persist:session_${sessionEntry.id}`;
+        const ses = session.fromPartition(partition);
+        const cookies = await ses.cookies.get({ url: 'https://www.roblox.com', name: '.ROBLOSECURITY' });
+        if (cookies && cookies.length > 0) {
+          dataToExport.cookies[sessionEntry.id] = cookies[0].value;
+        }
+      }
+
+      fs.writeFileSync(filePath, JSON.stringify(dataToExport, null, 2), 'utf-8');
+      return { success: true };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
+  });
+
+  ipcMain.handle('app:importData', async (event) => {
+    const win = BrowserWindow.fromWebContents(event.sender);
+    if (!win) return { success: false, error: 'No main window' };
+
+    const { canceled, filePaths } = await dialog.showOpenDialog(win, {
+      title: 'Import Sessions & Tokens',
+      properties: ['openFile'],
+      filters: [{ name: 'BloxFruit Manager Backup', extensions: ['bfm', 'json'] }]
+    });
+
+    if (canceled || filePaths.length === 0) return { success: false, error: 'Canceled' };
+
+    try {
+      const raw = fs.readFileSync(filePaths[0], 'utf-8');
+      const importedData = JSON.parse(raw);
+
+      if (importedData.store) {
+        store.setSessions(importedData.store);
+      }
+      if (importedData.multiLoadEnabled !== undefined) {
+        store.setMultiLoadEnabled(importedData.multiLoadEnabled);
+      }
+      if (importedData.globalPrivateLink !== undefined) {
+        store.setGlobalPrivateLink(importedData.globalPrivateLink);
+      }
+
+      if (importedData.cookies) {
+        for (const [sessionId, cookieValue] of Object.entries(importedData.cookies)) {
+          const partition = `persist:session_${sessionId}`;
+          const ses = session.fromPartition(partition);
+          await ses.cookies.set({
+            url: 'https://www.roblox.com',
+            name: '.ROBLOSECURITY',
+            value: cookieValue as string,
+            domain: '.roblox.com',
+            path: '/',
+            secure: true,
+            httpOnly: true
+          });
+        }
+      }
+      
+      return { success: true, sessions: store.getSessions(), multiLoadEnabled: store.getMultiLoadEnabled(), globalPrivateLink: store.getGlobalPrivateLink() };
+    } catch (err: any) {
+      return { success: false, error: err.message };
+    }
   });
 }
 

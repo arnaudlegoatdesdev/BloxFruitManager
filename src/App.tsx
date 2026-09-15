@@ -113,6 +113,27 @@ export default function App() {
     setShowGlobalPrivateModal(true);
   };
 
+  const handleExport = async () => {
+    const result = await window.electronAPI.backup.exportData();
+    if (!result.success && result.error !== 'Canceled') {
+      alert(`Export failed: ${result.error}`);
+    } else if (result.success) {
+      alert('Export successful!');
+    }
+  };
+
+  const handleImport = async () => {
+    const result = await window.electronAPI.backup.importData();
+    if (result.success) {
+      if (result.sessions) setSessions(result.sessions);
+      if (result.multiLoadEnabled !== undefined) setMultiLoadEnabled(result.multiLoadEnabled);
+      if (result.globalPrivateLink !== undefined) setGlobalPrivateLink(result.globalPrivateLink);
+      alert('Import successful!');
+    } else if (result.error !== 'Canceled') {
+      alert(`Import failed: ${result.error}`);
+    }
+  };
+
   return (
     <div className="min-h-screen bg-gray-950 text-white flex flex-col">
       {/* Draggable title bar region */}
@@ -132,6 +153,28 @@ export default function App() {
           className="flex items-center gap-3" 
           style={{ WebkitAppRegion: 'no-drag' } as React.CSSProperties}
         >
+          {/* Import Button */}
+          <button
+            onClick={handleImport}
+            className="p-1.5 rounded-lg text-gray-500 hover:text-blue-400 hover:bg-blue-500/10 transition-colors cursor-pointer"
+            title="Import Settings & Tokens"
+          >
+            <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5M16.5 12L12 16.5m0 0L7.5 12m4.5 4.5V3" />
+            </svg>
+          </button>
+
+          {/* Export Button */}
+          <button
+            onClick={handleExport}
+            className="p-1.5 rounded-lg text-gray-500 hover:text-green-400 hover:bg-green-500/10 transition-colors cursor-pointer"
+            title="Export Settings & Tokens"
+          >
+            <svg className="w-[18px] h-[18px]" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
+              <path strokeLinecap="round" strokeLinejoin="round" d="M3 16.5v2.25A2.25 2.25 0 005.25 21h13.5A2.25 2.25 0 0021 18.75V16.5m-13.5-9L12 3m0 0l4.5 4.5M12 3v13.5" />
+            </svg>
+          </button>
+
           {/* Global Private Link Button */}
           <button
             onClick={openPrivateLinkSettings}
