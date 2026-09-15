@@ -45,9 +45,9 @@
     ],
     "extraResources": [
       {
-        "from": "resources/MultipleRobloxInstances",
-        "to": "MultipleRobloxInstances",
-        "filter": ["**/*"]
+        "from": "resources/MultiRoblox",
+        "to": "MultiRoblox",
+        "filter": ["BloxFruitManager-Multi.exe"]
       }
     ],
     "mac": {

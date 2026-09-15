@@ -89,16 +89,16 @@ const openWindows = new Map<string, BrowserWindow>();
 
 // ── Windows Multi-Instance Logic ────────────────────────────────────────────
 
-let multiInstanceProcess: ChildProcess | null = null;
+const multiLockPath = path.join(process.env.LOCALAPPDATA || '', 'BloxFruitManager');
+const multiLockFile = path.join(multiLockPath, 'multi.lock');
 
 function stopWindowsMultiInstance() {
-  if (multiInstanceProcess) {
+  if (fs.existsSync(multiLockFile)) {
     try {
-      multiInstanceProcess.kill();
+      fs.unlinkSync(multiLockFile);
     } catch (e) {
-      console.error('Failed to kill multiInstanceProcess:', e);
+      console.error('Failed to delete lock file:', e);
     }
-    multiInstanceProcess = null;
   }
 }
 
@@ -106,22 +106,38 @@ function startWindowsMultiInstance() {
   if (process.platform !== 'win32') return;
   stopWindowsMultiInstance();
 
+  try {
+    const tasklist = execSync('tasklist /FI "IMAGENAME eq RobloxPlayerBeta.exe" /NH', { encoding: 'utf8' });
+    if (tasklist.includes('RobloxPlayerBeta.exe')) {
+      const response = dialog.showMessageBoxSync({
+        type: 'warning',
+        title: 'Close Roblox',
+        message: 'Roblox must be closed to enable Multi Load. Should we close it now?',
+        buttons: ['Yes', 'No']
+      });
+      if (response === 0) {
+        execSync('taskkill /F /IM RobloxPlayerBeta.exe /T');
+      }
+    }
+  } catch (e) {}
+
   const isPackaged = app.isPackaged;
   const basePath = isPackaged ? process.resourcesPath : app.getAppPath();
-  const exePath = path.join(basePath, isPackaged ? 'MultipleRobloxInstances' : 'resources/MultipleRobloxInstances', 'MultipleRobloxInstances.exe');
+  const exePath = path.join(basePath, isPackaged ? 'MultiRoblox' : 'resources/MultiRoblox', 'BloxFruitManager-Multi.exe');
   
   if (fs.existsSync(exePath)) {
-    multiInstanceProcess = spawn(exePath, [], {
-      detached: true,
-      stdio: 'ignore'
-    });
+    if (!fs.existsSync(multiLockPath)) fs.mkdirSync(multiLockPath, { recursive: true });
+    fs.writeFileSync(multiLockFile, 'lock');
     
-    if (multiInstanceProcess) {
-      multiInstanceProcess.unref();
-      console.log('[MultiLoad] Windows MultipleRobloxInstances app started');
-    }
+    shell.openPath(exePath).then((error) => {
+      if (error) {
+        console.error('[MultiLoad] Failed to start BloxFruitManager-Multi.exe:', error);
+      } else {
+        console.log('[MultiLoad] Windows invisible MultiRoblox app started');
+      }
+    });
   } else {
-    console.error('[MultiLoad] Could not find MultipleRobloxInstances.exe at', exePath);
+    console.error('[MultiLoad] Could not find BloxFruitManager-Multi.exe at', exePath);
   }
 }
 
