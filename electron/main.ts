@@ -1,8 +1,12 @@
-import { app, BrowserWindow, ipcMain, session, shell, dialog } from 'electron';
+import { app, BrowserWindow, ipcMain, session, shell, dialog, Menu } from 'electron';
 import path from 'path';
 import fs from 'fs';
 import { spawn, execSync, ChildProcess } from 'child_process';
 
+
+if (process.platform === 'win32') {
+  Menu.setApplicationMenu(null);
+}
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -174,13 +178,14 @@ function getUrlForSession(customName: string): string {
 
 function createMainWindow(): void {
   mainWindow = new BrowserWindow({
-    width: 520,
+    width: 620,
     height: 680,
-    minWidth: 420,
+    minWidth: 580,
     minHeight: 500,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
     backgroundColor: '#030712',
+    autoHideMenuBar: true,
     webPreferences: {
       preload: getPreloadPath(),
       contextIsolation: true,
