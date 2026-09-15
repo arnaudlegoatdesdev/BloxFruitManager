@@ -29,6 +29,7 @@ export interface ElectronAPI {
     exportData: () => Promise<{ success: boolean; error?: string }>;
     importData: () => Promise<{ success: boolean; error?: string; sessions?: SessionEntry[]; multiLoadEnabled?: boolean; globalPrivateLink?: string }>;
   };
+  platform: string;
 }
 
 contextBridge.exposeInMainWorld('electronAPI', {
@@ -57,5 +58,6 @@ contextBridge.exposeInMainWorld('electronAPI', {
   backup: {
     exportData: () => ipcRenderer.invoke('app:exportData'),
     importData: () => ipcRenderer.invoke('app:importData'),
-  }
+  },
+  platform: process.platform
 } satisfies ElectronAPI);

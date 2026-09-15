@@ -188,24 +188,26 @@ export default function App() {
           </button>
 
           {/* Multi Load Toggle */}
-          <button
-            onClick={handleToggleMultiLoad}
-            className="flex items-center gap-2 cursor-pointer group"
-            title={multiLoadEnabled ? 'Multi Load is ON — multiple Roblox instances allowed' : 'Multi Load is OFF — single instance only'}
-          >
-            <span className={`text-[10px] font-semibold tracking-wider uppercase transition-colors ${
-              multiLoadEnabled ? 'text-emerald-400' : 'text-gray-600'
-            }`}>
-              Multi Load
-            </span>
-            <div className={`relative w-9 h-5 rounded-full transition-colors duration-200 ${
-              multiLoadEnabled ? 'bg-emerald-500' : 'bg-gray-700'
-            }`}>
-              <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200 ${
-                multiLoadEnabled ? 'left-[18px]' : 'left-0.5'
-              }`} />
-            </div>
-          </button>
+          {window.electronAPI.platform === 'win32' && (
+            <button
+              onClick={handleToggleMultiLoad}
+              className="flex items-center gap-2 cursor-pointer group"
+              title={multiLoadEnabled ? 'Multi Load is ON — multiple Roblox instances allowed' : 'Multi Load is OFF — single instance only'}
+            >
+              <span className={`text-[10px] font-semibold tracking-wider uppercase transition-colors ${
+                multiLoadEnabled ? 'text-emerald-400' : 'text-gray-600'
+              }`}>
+                Multi Load
+              </span>
+              <div className={`relative w-9 h-5 rounded-full transition-colors duration-200 ${
+                multiLoadEnabled ? 'bg-emerald-500' : 'bg-gray-700'
+              }`}>
+                <div className={`absolute top-0.5 w-4 h-4 rounded-full bg-white shadow-sm transition-all duration-200 ${
+                  multiLoadEnabled ? 'left-[18px]' : 'left-0.5'
+                }`} />
+              </div>
+            </button>
+          )}
         </div>
       </div>
 

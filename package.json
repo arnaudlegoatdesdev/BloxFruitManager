@@ -11,7 +11,9 @@
     "build:electron": "tsc -p tsconfig.electron.json",
     "build": "npm run build:renderer && npm run build:electron",
     "pack": "npm run build && electron-builder --mac",
-    "dist": "npm run build && electron-builder --mac --publish always"
+    "dist": "npm run build && electron-builder --mac --publish always",
+    "pack:win": "npm run build && electron-builder --win",
+    "dist:win": "npm run build && electron-builder --win --publish always"
   },
   "repository": {
     "type": "git",
@@ -68,6 +70,18 @@
           "path": "/Applications"
         }
       ]
+    },
+    "win": {
+      "target": ["nsis"],
+      "icon": "build/flamme.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "installerIcon": "build/flamme.png",
+      "uninstallerIcon": "build/flamme.png",
+      "createDesktopShortcut": true,
+      "shortcutName": "Blox Fruit Manager"
     }
   },
   "dependencies": {

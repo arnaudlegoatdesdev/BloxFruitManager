@@ -1,7 +1,7 @@
 import { app, BrowserWindow, ipcMain, session, shell, dialog } from 'electron';
 import path from 'path';
 import fs from 'fs';
-import { execSync } from 'child_process';
+
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -86,91 +86,14 @@ let store: JsonStore;
 // Track open session windows to prevent duplicates
 const openWindows = new Map<string, BrowserWindow>();
 
-// ── MultiLoad Isolation Logic ───────────────────────────────────────────────
-
-function launchRobloxIsolated(sessionId: string, robloxUrl: string) {
-  try {
-    console.log(`[MultiLoad] Launching isolated Roblox for session: ${sessionId}`);
-    
-    const baseAppPath = '/Applications/Roblox.app';
-    if (!fs.existsSync(baseAppPath)) {
-      throw new Error('Roblox.app introuvable dans /Applications');
-    }
-
-    const instancesDir = path.join(app.getPath('userData'), 'Instances');
-    const fakeHome = path.join(instancesDir, `Home_${sessionId}`);
-    const isolatedApp = `/tmp/Roblox_Session_${sessionId}.app`;
-
-    if (fs.existsSync(isolatedApp)) {
-      execSync(`rm -rf "${isolatedApp}"`);
-    }
-    
-    // 1. Copy Roblox using APFS Clone (-cR) which takes ZERO extra disk space!
-    console.log('[MultiLoad] Cloning Roblox application (APFS Copy-on-Write)...');
-    execSync(`cp -cR "${baseAppPath}" "${isolatedApp}" || cp -R "${baseAppPath}" "${isolatedApp}"`);
-
-    // 2. Modify Info.plist to change Bundle ID and disable multiple instances prohibition.
-    // This is REQUIRED because Roblox natively checks if its own Bundle ID is already running,
-    // and if so, it kills the old one or forwards the URL to it!
-    const plistPath = path.join(isolatedApp, 'Contents', 'Info');
-    console.log('[MultiLoad] Modifying Info.plist...');
-    execSync(`defaults write "${plistPath}" CFBundleIdentifier "com.roblox.RobloxPlayer.${sessionId}"`);
-    execSync(`defaults write "${plistPath}" LSMultipleInstancesProhibited -bool false`);
-
-    // 3. Resign the app to fix the broken signature from modifying Info.plist
-    console.log('[MultiLoad] Re-signing the modified application...');
-    execSync(`codesign --force --deep --sign - "${isolatedApp}"`);
-
-    // 4. CRITICAL: We must delete the embedded RobloxPlayerInstaller from our clone.
-    // By deleting it, Roblox skips the update check and launches the game directly!
-    // This prevents "Another Installer is running" and stops the first instance from being killed.
-    const installerPath = path.join(isolatedApp, 'Contents', 'MacOS', 'RobloxPlayerInstaller.app');
-    execSync(`rm -rf "${installerPath}"`);
-
-    // 5. Create isolated home directory structure
-    const fakeLibrary = path.join(fakeHome, 'Library');
-    if (!fs.existsSync(fakeLibrary)) {
-      fs.mkdirSync(fakeLibrary, { recursive: true });
-    }
-
-    // 6. Seed the Fake Home with the real version data so the game doesn't say "Mise à jour exigée"
-    // We STRICTLY EXCLUDE `*.xml` (GlobalBasicSettings) to prevent the "impossible de trouver les clées" Keychain error!
-    const realHome = app.getPath('home');
-    const realRobloxDir = path.join(realHome, 'Library', 'Roblox');
-    const fakeRobloxDir = path.join(fakeLibrary, 'Roblox');
-    
-    if (fs.existsSync(realRobloxDir)) {
-      console.log('[MultiLoad] Seeding Fake Home to prevent Update Required prompt...');
-      execSync(`mkdir -p "${fakeRobloxDir}"`);
-      // We exclude GlobalBasicSettings to prevent the Keychain error, but we MUST keep 
-      // GlobalSettings_13.xml (FastFlags) otherwise the game forces an OTA Restart!
-      execSync(`rsync -a --exclude="LocalStorage" --exclude="GlobalBasicSettings_13*.xml" "${realRobloxDir}/" "${fakeRobloxDir}/"`);
-    }
-
-    const realHTTP = path.join(realHome, 'Library', 'HTTPStorages', 'com.roblox.RobloxPlayer');
-    const fakeHTTP = path.join(fakeLibrary, 'HTTPStorages', 'com.roblox.RobloxPlayer');
-    if (fs.existsSync(realHTTP)) {
-      execSync(`mkdir -p "${fakeHTTP}"`);
-      execSync(`rsync -a --exclude="*.binarycookies" "${realHTTP}/" "${fakeHTTP}/"`);
-    }
-
-    // 7. Launch! We execute the binary directly instead of using 'open -a'.
-    console.log('[MultiLoad] 🚀 Starting isolated instance...');
-    const binaryPath = path.join(isolatedApp, 'Contents', 'MacOS', 'RobloxPlayer');
-    const launchCmd = `env HOME="${fakeHome}" "${binaryPath}" "${robloxUrl}" > /dev/null 2>&1 &`;
-    execSync(launchCmd);
-    
-    console.log('[MultiLoad] ✅ Isolated instance launched successfully!');
-  } catch (err: any) {
-    console.error('[MultiLoad] Error launching isolated Roblox:', err);
-    require('electron').dialog.showErrorBox('MultiLoad Error', String(err));
-  }
-}
+// ── Launch Logic ───────────────────────────────────────────────
 
 function handleRobloxLaunch(targetUrl: string, sessionId: string): boolean {
   if (targetUrl.startsWith('roblox-player://') || targetUrl.startsWith('roblox://')) {
-    if (store.getMultiLoadEnabled()) {
-      launchRobloxIsolated(sessionId, targetUrl);
+    if (store.getMultiLoadEnabled() && process.platform === 'win32') {
+      // TODO: Implement Windows multi-instance mutex killer logic here in the future
+      console.log(`[MultiLoad] Windows multi-instance not implemented yet for session: ${sessionId}`);
+      shell.openExternal(targetUrl);
     } else {
       shell.openExternal(targetUrl);
     }
@@ -352,13 +275,6 @@ function registerIpcHandlers(): void {
     }
     openWindows.delete(sessionId);
     
-    // Clean up Fake Home and Clone!
-    try {
-      const fakeHome = path.join(app.getPath('userData'), 'Instances', `Home_${sessionId}`);
-      const isolatedApp = `/tmp/Roblox_Session_${sessionId}.app`;
-      execSync(`rm -rf "${fakeHome}" "${isolatedApp}"`);
-    } catch(e) {}
-
     return sessions;
   });
 
