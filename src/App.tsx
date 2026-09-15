@@ -86,6 +86,34 @@ export default function App() {
     setMultiLoadEnabled(result);
   };
 
+  const handleLaunchAll = async () => {
+    if (!multiLoadEnabled) {
+      alert("You must enable Multi Load to use this feature. Please toggle it ON first.");
+      return;
+    }
+    
+    const bloxyAccounts = sessions.filter(s => s.customName.toLowerCase().startsWith('bloxy'));
+    
+    if (bloxyAccounts.length === 0) {
+      alert("No accounts found starting with 'bloxy'.");
+      return;
+    }
+
+    let delay = 0;
+    for (const session of bloxyAccounts) {
+      setTimeout(() => {
+        const linkToUse = session.privateLink || globalPrivateLink;
+        if (linkToUse) {
+          window.electronAPI.sessions.openPrivate(session.id, session.customName, linkToUse);
+        } else {
+          // Fallback if no private link is set
+          window.electronAPI.sessions.open(session.id, session.customName);
+        }
+      }, delay);
+      delay += 500; // stagger launches slightly (0.5s) to avoid UI lockups and give Electron time to spawn browser windows
+    }
+  };
+
   const handleReorder = async (id: string, direction: 'up' | 'down') => {
     const updated = await window.electronAPI.sessions.reorder(id, direction);
     setSessions(updated);
@@ -186,6 +214,17 @@ export default function App() {
               <path strokeLinecap="round" strokeLinejoin="round" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z" />
             </svg>
           </button>
+
+          {/* Launch All Button */}
+          {window.electronAPI.platform === 'win32' && (
+            <button
+              onClick={handleLaunchAll}
+              className="px-2.5 py-1 text-[11px] font-bold tracking-wide uppercase rounded bg-indigo-500/10 text-indigo-400 border border-indigo-500/20 hover:bg-indigo-500/20 transition-colors cursor-pointer"
+              title="Launch all 'bloxy' accounts into private server"
+            >
+              Launch All
+            </button>
+          )}
 
           {/* Multi Load Toggle */}
           {window.electronAPI.platform === 'win32' && (
