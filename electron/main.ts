@@ -1,6 +1,7 @@
-import { app, BrowserWindow, ipcMain, session } from 'electron';
-import * as path from 'path';
-import * as fs from 'fs';
+import { app, BrowserWindow, ipcMain, session, shell } from 'electron';
+import path from 'path';
+import fs from 'fs';
+import { execSync } from 'child_process';
 
 // ── Types ───────────────────────────────────────────────────────────────────
 
@@ -12,6 +13,8 @@ interface SessionEntry {
 
 interface StoreData {
   sessions: SessionEntry[];
+  multiLoadEnabled: boolean;
+  globalPrivateLink: string;
 }
 
 // ── Simple JSON Store ───────────────────────────────────────────────────────
@@ -30,12 +33,15 @@ class JsonStore {
     try {
       if (fs.existsSync(this.filePath)) {
         const raw = fs.readFileSync(this.filePath, 'utf-8');
-        return JSON.parse(raw) as StoreData;
+        const parsed = JSON.parse(raw);
+        if (parsed.multiLoadEnabled === undefined) parsed.multiLoadEnabled = false;
+        if (parsed.globalPrivateLink === undefined) parsed.globalPrivateLink = '';
+        return parsed as StoreData;
       }
     } catch {
       // Corrupted file — reset
     }
-    return { sessions: [] };
+    return { sessions: [], multiLoadEnabled: false, globalPrivateLink: '' };
   }
 
   private save(): void {
@@ -50,6 +56,24 @@ class JsonStore {
     this.data.sessions = sessions;
     this.save();
   }
+
+  getMultiLoadEnabled(): boolean {
+    return this.data.multiLoadEnabled;
+  }
+
+  setMultiLoadEnabled(enabled: boolean): void {
+    this.data.multiLoadEnabled = enabled;
+    this.save();
+  }
+
+  getGlobalPrivateLink(): string {
+    return this.data.globalPrivateLink;
+  }
+
+  setGlobalPrivateLink(link: string): void {
+    this.data.globalPrivateLink = link;
+    this.save();
+  }
 }
 
 // ── Globals ─────────────────────────────────────────────────────────────────
@@ -62,6 +86,99 @@ let store: JsonStore;
 // Track open session windows to prevent duplicates
 const openWindows = new Map<string, BrowserWindow>();
 
+// ── MultiLoad Isolation Logic ───────────────────────────────────────────────
+
+function launchRobloxIsolated(sessionId: string, robloxUrl: string) {
+  try {
+    console.log(`[MultiLoad] Launching isolated Roblox for session: ${sessionId}`);
+    
+    const baseAppPath = '/Applications/Roblox.app';
+    if (!fs.existsSync(baseAppPath)) {
+      throw new Error('Roblox.app introuvable dans /Applications');
+    }
+
+    const instancesDir = path.join(app.getPath('userData'), 'Instances');
+    const fakeHome = path.join(instancesDir, `Home_${sessionId}`);
+    const isolatedApp = `/tmp/Roblox_Session_${sessionId}.app`;
+
+    if (fs.existsSync(isolatedApp)) {
+      execSync(`rm -rf "${isolatedApp}"`);
+    }
+    
+    // 1. Copy Roblox using APFS Clone (-cR) which takes ZERO extra disk space!
+    console.log('[MultiLoad] Cloning Roblox application (APFS Copy-on-Write)...');
+    execSync(`cp -cR "${baseAppPath}" "${isolatedApp}" || cp -R "${baseAppPath}" "${isolatedApp}"`);
+
+    // 2. Modify Info.plist to change Bundle ID and disable multiple instances prohibition.
+    // This is REQUIRED because Roblox natively checks if its own Bundle ID is already running,
+    // and if so, it kills the old one or forwards the URL to it!
+    const plistPath = path.join(isolatedApp, 'Contents', 'Info');
+    console.log('[MultiLoad] Modifying Info.plist...');
+    execSync(`defaults write "${plistPath}" CFBundleIdentifier "com.roblox.RobloxPlayer.${sessionId}"`);
+    execSync(`defaults write "${plistPath}" LSMultipleInstancesProhibited -bool false`);
+
+    // 3. Resign the app to fix the broken signature from modifying Info.plist
+    console.log('[MultiLoad] Re-signing the modified application...');
+    execSync(`codesign --force --deep --sign - "${isolatedApp}"`);
+
+    // 4. CRITICAL: We must delete the embedded RobloxPlayerInstaller from our clone.
+    // By deleting it, Roblox skips the update check and launches the game directly!
+    // This prevents "Another Installer is running" and stops the first instance from being killed.
+    const installerPath = path.join(isolatedApp, 'Contents', 'MacOS', 'RobloxPlayerInstaller.app');
+    execSync(`rm -rf "${installerPath}"`);
+
+    // 5. Create isolated home directory structure
+    const fakeLibrary = path.join(fakeHome, 'Library');
+    if (!fs.existsSync(fakeLibrary)) {
+      fs.mkdirSync(fakeLibrary, { recursive: true });
+    }
+
+    // 6. Seed the Fake Home with the real version data so the game doesn't say "Mise à jour exigée"
+    // We STRICTLY EXCLUDE `*.xml` (GlobalBasicSettings) to prevent the "impossible de trouver les clées" Keychain error!
+    const realHome = app.getPath('home');
+    const realRobloxDir = path.join(realHome, 'Library', 'Roblox');
+    const fakeRobloxDir = path.join(fakeLibrary, 'Roblox');
+    
+    if (fs.existsSync(realRobloxDir)) {
+      console.log('[MultiLoad] Seeding Fake Home to prevent Update Required prompt...');
+      execSync(`mkdir -p "${fakeRobloxDir}"`);
+      // We exclude GlobalBasicSettings to prevent the Keychain error, but we MUST keep 
+      // GlobalSettings_13.xml (FastFlags) otherwise the game forces an OTA Restart!
+      execSync(`rsync -a --exclude="LocalStorage" --exclude="GlobalBasicSettings_13*.xml" "${realRobloxDir}/" "${fakeRobloxDir}/"`);
+    }
+
+    const realHTTP = path.join(realHome, 'Library', 'HTTPStorages', 'com.roblox.RobloxPlayer');
+    const fakeHTTP = path.join(fakeLibrary, 'HTTPStorages', 'com.roblox.RobloxPlayer');
+    if (fs.existsSync(realHTTP)) {
+      execSync(`mkdir -p "${fakeHTTP}"`);
+      execSync(`rsync -a --exclude="*.binarycookies" "${realHTTP}/" "${fakeHTTP}/"`);
+    }
+
+    // 7. Launch! We execute the binary directly instead of using 'open -a'.
+    console.log('[MultiLoad] 🚀 Starting isolated instance...');
+    const binaryPath = path.join(isolatedApp, 'Contents', 'MacOS', 'RobloxPlayer');
+    const launchCmd = `env HOME="${fakeHome}" "${binaryPath}" "${robloxUrl}" > /dev/null 2>&1 &`;
+    execSync(launchCmd);
+    
+    console.log('[MultiLoad] ✅ Isolated instance launched successfully!');
+  } catch (err: any) {
+    console.error('[MultiLoad] Error launching isolated Roblox:', err);
+    require('electron').dialog.showErrorBox('MultiLoad Error', String(err));
+  }
+}
+
+function handleRobloxLaunch(targetUrl: string, sessionId: string): boolean {
+  if (targetUrl.startsWith('roblox-player://') || targetUrl.startsWith('roblox://')) {
+    if (store.getMultiLoadEnabled()) {
+      launchRobloxIsolated(sessionId, targetUrl);
+    } else {
+      shell.openExternal(targetUrl);
+    }
+    return true;
+  }
+  return false;
+}
+
 // ── Helpers ─────────────────────────────────────────────────────────────────
 
 const isDev = !app.isPackaged;
@@ -70,11 +187,6 @@ function getPreloadPath(): string {
   return path.join(__dirname, 'preload.js');
 }
 
-/**
- * Determine which URL to open based on the session name.
- * If the name starts with "Bloxy" (case-insensitive), open Blox Fruits.
- * Otherwise, open the Roblox home page.
- */
 function getUrlForSession(customName: string): string {
   return customName.toLowerCase().startsWith('bloxy')
     ? BLOX_FRUITS_URL
@@ -91,7 +203,7 @@ function createMainWindow(): void {
     minHeight: 500,
     titleBarStyle: 'hiddenInset',
     trafficLightPosition: { x: 16, y: 16 },
-    backgroundColor: '#030712', // gray-950
+    backgroundColor: '#030712',
     webPreferences: {
       preload: getPreloadPath(),
       contextIsolation: true,
@@ -114,7 +226,6 @@ function createMainWindow(): void {
 // ── Session Browser Window ──────────────────────────────────────────────────
 
 function openSessionWindow(sessionId: string, customName: string, url: string): void {
-  // If already open, focus it and navigate to the new URL
   const existing = openWindows.get(sessionId);
   if (existing && !existing.isDestroyed()) {
     existing.loadURL(url);
@@ -122,11 +233,9 @@ function openSessionWindow(sessionId: string, customName: string, url: string): 
     return;
   }
 
-  // Create a partition-isolated session
   const partition = `persist:session_${sessionId}`;
   const ses = session.fromPartition(partition);
 
-  // Set a standard Chrome user-agent so Roblox doesn't block the embedded browser
   ses.setUserAgent(
     'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
   );
@@ -143,10 +252,30 @@ function openSessionWindow(sessionId: string, customName: string, url: string): 
     },
   });
 
-  // Handle new-window navigations (e.g. target="_blank") — open in same window
   win.webContents.setWindowOpenHandler(({ url }) => {
+    if (handleRobloxLaunch(url, sessionId)) {
+      return { action: 'deny' };
+    }
     win.loadURL(url);
     return { action: 'deny' };
+  });
+
+  win.webContents.on('will-navigate', (event, targetUrl) => {
+    if (handleRobloxLaunch(targetUrl, sessionId)) {
+      event.preventDefault();
+    }
+  });
+
+  win.webContents.on('will-redirect', (event, targetUrl) => {
+    if (handleRobloxLaunch(targetUrl, sessionId)) {
+      event.preventDefault();
+    }
+  });
+
+  win.webContents.on('will-frame-navigate', (event) => {
+    if (handleRobloxLaunch(event.url, sessionId)) {
+      event.preventDefault();
+    }
   });
 
   win.loadURL(url);
@@ -158,15 +287,54 @@ function openSessionWindow(sessionId: string, customName: string, url: string): 
   });
 }
 
+// ── Avatar Fetching ──────────────────────────────────────────────────────────
+
+async function fetchSessionAvatar(sessionId: string): Promise<string | null> {
+  try {
+    const partition = `persist:session_${sessionId}`;
+    const ses = session.fromPartition(partition);
+    const cookies = await ses.cookies.get({ url: 'https://www.roblox.com', name: '.ROBLOSECURITY' });
+    
+    if (!cookies || cookies.length === 0) return null; // Not logged in
+    
+    const cookieVal = cookies[0].value;
+    
+    // 1. Get User ID from authenticated session
+    const authRes = await fetch('https://users.roblox.com/v1/users/authenticated', {
+      headers: { Cookie: `.ROBLOSECURITY=${cookieVal}` }
+    });
+    
+    if (!authRes.ok) return null;
+    
+    const authData = await authRes.json();
+    const userId = authData.id;
+    if (!userId) return null;
+    
+    // 2. Get Avatar Headshot (Circular 150x150 Png)
+    const thumbRes = await fetch(`https://thumbnails.roblox.com/v1/users/avatar-headshot?userIds=${userId}&size=150x150&format=Png&isCircular=true`);
+    if (!thumbRes.ok) return null;
+    
+    const thumbData = await thumbRes.json();
+    if (thumbData?.data && thumbData.data.length > 0) {
+      return thumbData.data[0].imageUrl;
+    }
+  } catch (err) {
+    console.error(`[Avatar] Failed to fetch avatar for session ${sessionId}:`, err);
+  }
+  return null;
+}
+
 // ── IPC Handlers ────────────────────────────────────────────────────────────
 
 function registerIpcHandlers(): void {
-  // Get all saved sessions
   ipcMain.handle('sessions:get', (): SessionEntry[] => {
     return store.getSessions();
   });
 
-  // Add a new session
+  ipcMain.handle('sessions:getAvatar', async (_event, sessionId: string): Promise<string | null> => {
+    return await fetchSessionAvatar(sessionId);
+  });
+
   ipcMain.handle('sessions:add', (_event, entry: SessionEntry): SessionEntry[] => {
     const sessions = store.getSessions();
     sessions.push(entry);
@@ -174,25 +342,27 @@ function registerIpcHandlers(): void {
     return sessions;
   });
 
-  // Remove a session
   ipcMain.handle('sessions:remove', (_event, sessionId: string): SessionEntry[] => {
     const sessions = store.getSessions().filter((s) => s.id !== sessionId);
     store.setSessions(sessions);
 
-    // Close the window if open
     const win = openWindows.get(sessionId);
     if (win && !win.isDestroyed()) {
       win.close();
     }
     openWindows.delete(sessionId);
+    
+    // Clean up Fake Home and Clone!
+    try {
+      const fakeHome = path.join(app.getPath('userData'), 'Instances', `Home_${sessionId}`);
+      const isolatedApp = `/tmp/Roblox_Session_${sessionId}.app`;
+      execSync(`rm -rf "${fakeHome}" "${isolatedApp}"`);
+    } catch(e) {}
 
     return sessions;
   });
 
-  // Rename a session
-  ipcMain.handle(
-    'sessions:rename',
-    (_event, sessionId: string, newName: string): SessionEntry[] => {
+  ipcMain.handle('sessions:rename', (_event, sessionId: string, newName: string): SessionEntry[] => {
       const sessions = store.getSessions();
       const target = sessions.find((s) => s.id === sessionId);
       if (target) {
@@ -200,13 +370,9 @@ function registerIpcHandlers(): void {
         store.setSessions(sessions);
       }
       return sessions;
-    }
-  );
+  });
 
-  // Reorder a session (move up or down)
-  ipcMain.handle(
-    'sessions:reorder',
-    (_event, sessionId: string, direction: 'up' | 'down'): SessionEntry[] => {
+  ipcMain.handle('sessions:reorder', (_event, sessionId: string, direction: 'up' | 'down'): SessionEntry[] => {
       const sessions = store.getSessions();
       const index = sessions.findIndex((s) => s.id === sessionId);
       if (index === -1) return sessions;
@@ -214,36 +380,36 @@ function registerIpcHandlers(): void {
       const newIndex = direction === 'up' ? index - 1 : index + 1;
       if (newIndex < 0 || newIndex >= sessions.length) return sessions;
 
-      // Swap
       [sessions[index], sessions[newIndex]] = [sessions[newIndex], sessions[index]];
       store.setSessions(sessions);
       return sessions;
-    }
-  );
+  });
 
-  // Set private link for a session
-  ipcMain.handle(
-    'sessions:setPrivateLink',
-    (_event, sessionId: string, link: string): SessionEntry[] => {
-      const sessions = store.getSessions();
-      const target = sessions.find((s) => s.id === sessionId);
-      if (target) {
-        target.privateLink = link || undefined;
-        store.setSessions(sessions);
-      }
-      return sessions;
-    }
-  );
-
-  // Open an isolated browser window for a session (auto-detects URL from name)
   ipcMain.handle('sessions:open', (_event, sessionId: string, customName: string): void => {
     const url = getUrlForSession(customName);
     openSessionWindow(sessionId, customName, url);
   });
 
-  // Open an isolated browser window with the private server link
   ipcMain.handle('sessions:openPrivate', (_event, sessionId: string, customName: string, privateLink: string): void => {
     openSessionWindow(sessionId, customName, privateLink);
+  });
+
+  ipcMain.handle('multiload:getStatus', () => {
+    return store.getMultiLoadEnabled();
+  });
+
+  ipcMain.handle('multiload:toggle', (_event, enabled: boolean) => {
+    store.setMultiLoadEnabled(enabled);
+    return enabled;
+  });
+
+  ipcMain.handle('settings:getPrivateLink', () => {
+    return store.getGlobalPrivateLink();
+  });
+
+  ipcMain.handle('settings:setPrivateLink', (_event, link: string) => {
+    store.setGlobalPrivateLink(link);
+    return link;
   });
 }
 
